@@ -412,6 +412,7 @@ def step1_analysis():
         st.error("교육과정 데이터를 로드할 수 없습니다."); return
     
     # --- 1. 교과 및 단원 선택 ---
+    # (이 부분은 이전 코드와 동일)
     col1, col2, col3 = st.columns(3)
     with col1:
         subject = st.selectbox("📚 교과 선택", options=list(subjects_data.keys()))
@@ -430,17 +431,15 @@ def step1_analysis():
         selected_unit_name = st.radio("단원을 선택하세요:", options=unit_options, key="unit_selection")
 
         if selected_unit_name != st.session_state.lesson_plan['unit']:
-            # 단원이 바뀌면 생성된 학생 정보 초기화
             st.session_state.lesson_plan.update({
                 'subject': subject, 'grade': grade, 'semester': semester,
                 'unit': selected_unit_name,
                 'topic': f"{subject} {grade}학년 {semester}학기 - {selected_unit_name}",
-                'student_name': None # 학생 선택 초기화
+                'student_name': None
             })
-            st.session_state.generated_students = None # 생성된 학생 데이터 초기화
+            st.session_state.generated_students = None
             st.rerun()
 
-        # 선택된 단원 정보 표시
         selected_unit = next((u for u in units if u['unit'] == selected_unit_name), None)
         if selected_unit:
             st.markdown(f"""
@@ -455,16 +454,22 @@ def step1_analysis():
             # --- 2. AI 학생 프로필 생성 ---
             st.markdown("### 👨‍🎓 AI 기반 학습자 프로필 생성")
             if st.session_state.generated_students is None:
+                
+                # ▼▼▼▼▼ [수정된 부분] ▼▼▼▼▼
+                # 오류가 발생한 텍스트 줄 대신, st.info()를 사용하여 화면에 안내 메시지를 표시합니다.
+                st.info("단원 선택이 완료되었습니다. 아래 버튼을 눌러 AI 학생 프로필을 생성해주세요.")
+                # ▲▲▲▲▲ [수정된 부분] ▲▲▲▲▲
+
                 if st.button("🤖 선택 단원 맞춤 AI 학생 프로필 생성", type="primary", use_container_width=True):
                     with st.spinner('🤖 AI가 맞춤 학생 프로필을 생성 중입니다... 잠시만 기다려주세요.'):
                         profiles = generate_student_profiles_with_gemini(subject, grade, semester, selected_unit_name)
                         if profiles:
                             st.session_state.generated_students = profiles
-                            st.rerun() # 프로필 생성 후 화면 새로고침
+                            st.rerun()
                         else:
                             st.error("학생 프로필 생성에 실패했습니다. 다시 시도해주세요.")
             else:
-                # --- 3. 지도할 학생 선택 ---
+                # (이후 코드는 이전과 동일)
                 st.info("✅ AI 학생 프로필 생성이 완료되었습니다. 지도할 학생을 선택해주세요.")
                 student_names = list(st.session_state.generated_students.keys())
                 st.session_state.lesson_plan['student_name'] = st.selectbox(
@@ -489,7 +494,6 @@ def step1_analysis():
                         with cols[i]:
                             st.metric(label=item['평가'], value=f"{item['정답률']}%")
                     
-                    # --- 4. 맞춤 지도 계획 ---
                     st.markdown("### ✍️ 맞춤 지도 계획")
                     st.session_state.lesson_plan['guidance'] = st.text_area(
                         "학생의 강점을 강화하고 약점을 보완하기 위한 지도 계획을 작성해 주세요.", height=120,
