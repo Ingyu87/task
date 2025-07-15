@@ -1,89 +1,4 @@
-    
-    # Gemini에게 전달할 프롬프트 생성
-selected_features_info = ""
-    for stage, features in plan['design'].items():
-        if features:
-            feature_names = [AIDT_FEATURES.get(f, {}).get('name', f) for f in features]
-            selected_features_info += f"\n{stage}: {', '.join(feature_names)}"
-    
-    prompt = f"""
-    당신은 초등 교육 전문가이자 수업 설계 컨설턴트입니다.
-    아래의 수업 설계안에 대해 '수업의 강점', '발전 제안', '추가 에듀테크 도구 추천' 세 가지 항목으로 나누어 구체적이고 전문적인 피드백을 제공해주세요.
-    
-    - 수업 주제: {plan['topic']}
-    - 대상 학생: {STUDENT_DATA[plan['student_name']]['name']} ({STUDENT_DATA[plan['student_name']]['type']})
-    - 학생 특성: {STUDENT_DATA[plan['student_name']]['description']}
-    - 맞춤 지도 계획: {plan['guidance']}
-    - 적용 수업 모델: {plan['model']}
-    - 선택된 AIDT 기능: {selected_features_info}
-    
-    피드백은 반드시 아래 형식에 맞춰 한글로 작성해주세요.
-
-    ### 👍 수업의 강점
-    - [강점 1]
-    - [강점 2]
-
-    ### 💡 발전 제안
-    - [제안 1]
-    - [제안 2]
-
-    ### 🛠️ 추가 에듀테크 도구 추천
-    - [도구 이름]: [도구 설명]
-    - [도구 이름]: [도구 설명]
-    """
-
-    # AI 모델 호출 및 피드백 생성
-    with st.spinner('🤖 AI가 수업 설계안을 분석하고 컨설팅 보고서를 작성하는 중입니다...'):
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-            feedback_text = response.text
-            
-            feedback_dict = parse_feedback_from_gemini(feedback_text)
-            
-            st.markdown("""
-            <div class="feedback-section">
-            """, unsafe_allow_html=True)
-            st.markdown(feedback_text)
-            st.markdown("</div>", unsafe_allow_html=True)
-            
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col1:
-                st.download_button(
-                    label="📥 결과물 JPG 다운로드",
-                    data=generate_lesson_plan_image(plan, feedback_dict),
-                    file_name=f"lesson_plan_{plan['student_name']}_{plan['unit']}.jpg",
-                    mime="image/jpeg",
-                    use_container_width=True
-                )
-            with col3:
-                if st.button("🆕 새로운 수업 설계하기", type="primary", use_container_width=True):
-                    reset_app()
-                    st.rerun()
-
-        except Exception as e:
-            st.error(f"❌ AI 컨설팅 보고서 생성 중 오류가 발생했습니다: {e}")
-            
-            # 오류가 발생해도 기본 피드백과 다운로드는 제공
-            basic_feedback = {
-                'strengths': [f"'{STUDENT_DATA[plan['student_name']]['name']}' 학생을 위한 체계적인 수업 설계를 완료했습니다."],
-                'suggestions': ["AI 컨설팅 기능에 일시적 오류가 발생했지만, 수업 설계안은 정상적으로 완성되었습니다."],
-                'tools': []
-            }
-            
-            col1, col2, col3 = st.columns([1, 1, 1])
-            with col1:
-                st.download_button(
-                    label="📥 결과물 JPG 다운로드",
-                    data=generate_lesson_plan_image(plan, basic_feedback),
-                    file_name=f"lesson_plan_{plan['student_name']}_{plan['unit']}.jpg",
-                    mime="image/jpeg",
-                    use_container_width=True
-                )
-            with col3:
-                if st.button("🆕 새로운 수업 설계하기", type="primary", use_container_width=True):
-                    reset_app()
-                    st.rerun()import streamlit as st
+import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import io
 import textwrap
@@ -291,12 +206,10 @@ def load_json_data():
     }
     
     try:
-        # 단원학습내용.json 로드
         with open('단원학습내용.json', 'r', encoding='utf-8') as f:
             data['curriculum'] = json.load(f)
         st.success("✅ 교육과정 데이터 로드 완료")
         
-        # 에듀테크 JSON 로드
         with open('2023-2025 대한민국 초등 교실을 혁신하는 에듀테크 120.json', 'r', encoding='utf-8') as f:
             edutech_data = json.load(f)
             data['edutech'] = edutech_data
@@ -311,75 +224,75 @@ def load_json_data():
     
     return data
 
+# --- 기본 AIDT 기능 정의 ---
+AIDT_FEATURES = {
+    'diagnosis': {
+        'name': '🔍 학습진단 및 분석', 
+        'description': '학생의 현재 수준과 취약점을 데이터로 확인합니다.',
+        'icon': '🔍'
+    },
+    'dashboard': {
+        'name': '📊 교사 대시보드', 
+        'description': '학생별 학습 현황과 이력을 실시간으로 관리합니다.',
+        'icon': '📊'
+    },
+    'path': {
+        'name': '🛤️ 학습 경로 추천', 
+        'description': '학생 수준에 맞는 학습 순서와 콘텐츠를 제안합니다.',
+        'icon': '🛤️'
+    },
+    'tutor': {
+        'name': '🤖 지능형 AI 튜터', 
+        'description': '1:1 맞춤형 힌트와 피드백을 제공하여 문제 해결을 돕습니다.',
+        'icon': '🤖'
+    },
+    'collaboration': {
+        'name': '👥 소통 및 협업 도구', 
+        'description': '모둠 구성, 과제 공동수행, 실시간 토론을 지원합니다.',
+        'icon': '👥'
+    },
+    'portfolio': {
+        'name': '📁 디지털 포트폴리오', 
+        'description': '학생의 학습 과정과 결과물을 자동으로 기록하고 관리합니다.',
+        'icon': '📁'
+    },
+}
+
 # --- 데이터 로드 ---
 json_data = load_json_data()
 
-# --- 기본 AIDT 기능 정의 ---
-AIDT_FEATURES = {
-  'diagnosis': {
-    'name': '🔍 학습진단 및 분석', 
-    'description': '학생의 현재 수준과 취약점을 데이터로 확인합니다.',
-    'icon': '🔍'
-  },
-  'dashboard': {
-    'name': '📊 교사 대시보드', 
-    'description': '학생별 학습 현황과 이력을 실시간으로 관리합니다.',
-    'icon': '📊'
-  },
-  'path': {
-    'name': '🛤️ 학습 경로 추천', 
-    'description': '학생 수준에 맞는 학습 순서와 콘텐츠를 제안합니다.',
-    'icon': '🛤️'
-  },
-  'tutor': {
-    'name': '🤖 지능형 AI 튜터', 
-    'description': '1:1 맞춤형 힌트와 피드백을 제공하여 문제 해결을 돕습니다.',
-    'icon': '🤖'
-  },
-  'collaboration': {
-    'name': '👥 소통 및 협업 도구', 
-    'description': '모둠 구성, 과제 공동수행, 실시간 토론을 지원합니다.',
-    'icon': '👥'
-  },
-  'portfolio': {
-    'name': '📁 디지털 포트폴리오', 
-    'description': '학생의 학습 과정과 결과물을 자동으로 기록하고 관리합니다.',
-    'icon': '📁'
-  },
-}
-
 STUDENT_DATA = {
-  '이OO': {
-    'name': '이OO',
-    'type': '느린 학습자',
-    'description': '평소 자리 정리를 잘 하지 않으며, 교사가 근처에 오면 급히 공부하는 척하는 모습을 보입니다. 특히 시각적, 공간적 이해를 요구하는 개념에 어려움을 겪습니다.',
-    'data': [
-      { "평가": "형성평가: 각", "정답률": 80 },
-      { "평가": "형성평가: 직각", "정답률": 40 },
-      { "평가": "형성평가: 직사각형", "정답률": 60 },
-      { "평가": "AI 맞춤 진단", "정답률": 30 },
-    ],
-  },
-  '정OO': {
-    'name': '정OO',
-    'type': '빠른 학습자',
-    'description': '수업에 적극적이고 과제 해결 속도가 빠르지만, 조별 활동 시 친구들과의 마찰이 잦습니다. 학업 성취도는 높으나 협업 능력에 대한 지도가 필요합니다.',
-    'data': [
-      { "평가": "형성평가: 각", "정답률": 100 },
-      { "평가": "형성평가: 직각", "정답률": 100 },
-      { "평가": "단원평가", "정답률": 95 },
-    ],
-  },
-  '조OO': {
-    'name': '조OO',
-    'type': '보통 학습자',
-    'description': '내성적이고 조용하며 발표 시 긴장하는 경향이 있습니다. 평균적인 성취도를 보이나, 개념 이해에 대한 정서적 지지와 격려가 필요합니다.',
-    'data': [
-      { "평가": "형성평가: 똑같이 나누기", "정답률": 60 },
-      { "평가": "형성평가: 곱셈과 나눗셈 관계", "정답률": 60 },
-      { "평가": "평균 정답률", "정답률": 70 },
-    ],
-  }
+    '이OO': {
+        'name': '이OO',
+        'type': '느린 학습자',
+        'description': '평소 자리 정리를 잘 하지 않으며, 교사가 근처에 오면 급히 공부하는 척하는 모습을 보입니다. 특히 시각적, 공간적 이해를 요구하는 개념에 어려움을 겪습니다.',
+        'data': [
+            { "평가": "형성평가: 각", "정답률": 80 },
+            { "평가": "형성평가: 직각", "정답률": 40 },
+            { "평가": "형성평가: 직사각형", "정답률": 60 },
+            { "평가": "AI 맞춤 진단", "정답률": 30 },
+        ],
+    },
+    '정OO': {
+        'name': '정OO',
+        'type': '빠른 학습자',
+        'description': '수업에 적극적이고 과제 해결 속도가 빠르지만, 조별 활동 시 친구들과의 마찰이 잦습니다. 학업 성취도는 높으나 협업 능력에 대한 지도가 필요합니다.',
+        'data': [
+            { "평가": "형성평가: 각", "정답률": 100 },
+            { "평가": "형성평가: 직각", "정답률": 100 },
+            { "평가": "단원평가", "정답률": 95 },
+        ],
+    },
+    '조OO': {
+        'name': '조OO',
+        'type': '보통 학습자',
+        'description': '내성적이고 조용하며 발표 시 긴장하는 경향이 있습니다. 평균적인 성취도를 보이나, 개념 이해에 대한 정서적 지지와 격려가 필요합니다.',
+        'data': [
+            { "평가": "형성평가: 똑같이 나누기", "정답률": 60 },
+            { "평가": "형성평가: 곱셈과 나눗셈 관계", "정답률": 60 },
+            { "평가": "평균 정답률", "정답률": 70 },
+        ],
+    }
 }
 
 # --- 세션 상태 초기화 ---
@@ -528,7 +441,7 @@ def parse_feedback_from_gemini(text):
 
 def generate_lesson_plan_image(plan, feedback):
     """수업 설계안과 피드백을 바탕으로 JPG 이미지를 생성하는 함수"""
-    width, height = 800, 1200
+    width, height = 800, 1400
     bg_color = (255, 255, 255)
     img = Image.new('RGB', (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
@@ -553,14 +466,14 @@ def generate_lesson_plan_image(plan, feedback):
     draw.text((width/2, y), "AI 코칭 기반 맞춤수업 설계안", font=font_title, fill=(0,0,0), anchor="mt")
     y += 60
 
-    draw.text((40, y), f"1. 수업 분석: {plan['subject']} {plan['grade']}학년 {plan['semester']}학기", font=font_header, fill=(29, 78, 216))
+    # 1. 수업 분석
+    draw.text((40, y), f"1. 수업 분석: {plan['topic']}", font=font_header, fill=(29, 78, 216))
     y += 35
-    draw.text((50, y), f"■ 단원: {plan['unit']}", font=font_body, fill=(0,0,0))
-    y += 25
     student = STUDENT_DATA[plan['student_name']]
     draw.text((50, y), f"■ 대상 학생: {student['name']} ({student['type']})", font=font_body, fill=(0,0,0))
     y += 25
     
+    # 2. 맞춤 지도 계획
     draw.text((40, y), "2. 맞춤 지도 계획", font=font_header, fill=(29, 78, 216))
     y += 35
     lines = textwrap.wrap(plan['guidance'], width=80)
@@ -569,20 +482,22 @@ def generate_lesson_plan_image(plan, feedback):
         y += 20
     y += 15
 
+    # 3. 수업 설계
     draw.text((40, y), f"3. 수업 설계 ({plan['model']})", font=font_header, fill=(29, 78, 216))
     y += 35
     
-    edutech_tools = categorize_edutech_tools(json_data['edutech'])
-    for stage, selected_tools in plan['design'].items():
-        if selected_tools:
+    for stage, features in plan['design'].items():
+        if features:
             draw.text((50, y), f"■ {stage}:", font=font_body, fill=(0,0,0))
             y += 25
-            for tool_name in selected_tools:
-                draw.text((60, y), f"  - {tool_name}", font=font_small, fill=(50,50,50))
+            for feature in features:
+                feature_name = AIDT_FEATURES.get(feature, {}).get('name', feature)
+                draw.text((60, y), f"  - {feature_name}", font=font_small, fill=(50,50,50))
                 y += 18
             y += 10
     y += 15
     
+    # 4. AI 종합 컨설팅
     draw.text((40, y), "4. AI 종합 컨설팅", font=font_header, fill=(29, 78, 216))
     y += 35
     
@@ -602,6 +517,19 @@ def generate_lesson_plan_image(plan, feedback):
         for line in lines:
             draw.text((60, y), line, font=font_small, fill=(50,50,50))
             y += 18
+    y += 15
+
+    draw.text((50, y), "🛠️ 추가 에듀테크 도구 추천", font=font_body, fill=(37, 99, 235))
+    y += 25
+    for tool in feedback['tools']:
+        lines = textwrap.wrap(f"  - {tool['name']}: {tool['description']}", width=80)
+        for line in lines:
+            draw.text((60, y), line, font=font_small, fill=(50,50,50))
+            y += 18
+    y += 15
+    
+    # 워터마크 추가
+    draw.text((width/2, height-50), "© 서울가동초등학교 백인규", font=font_small, fill=(150,150,150), anchor="mt")
 
     buf = io.BytesIO()
     img.save(buf, format='JPEG')
@@ -1095,59 +1023,23 @@ def step4_feedback():
                 st.rerun()
         return
 
-    # 4단계에서 에듀테크 도구 추천을 위한 함수 추가
-    def get_edutech_recommendations():
-        """Gemini를 통해 에듀테크 도구 추천을 받는 함수"""
-        try:
-            gemini_api_key = st.secrets["GEMINI_API_KEY"]
-            genai.configure(api_key=gemini_api_key)
-            
-            plan = st.session_state.lesson_plan
-            student = STUDENT_DATA[plan['student_name']]
-            
-            # 에듀테크 120선 데이터에서 도구 정보 추출
-            edutech_tools_info = ""
-            if json_data['edutech'] and 'summary_table' in json_data['edutech']:
-                for tool in json_data['edutech']['summary_table'][:20]:  # 상위 20개만
-                    tool_name = tool.get('tool_name', '')
-                    core_feature = tool.get('core_feature', '')
-                    sub_category = tool.get('sub_category', '')
-                    edutech_tools_info += f"- {tool_name} ({sub_category}): {core_feature}\n"
-            
-            prompt = f"""
-            당신은 초등교육 전문가입니다. 다음 수업 설계안을 분석하고, 
-            제공된 에듀테크 120선 데이터에서 가장 적합한 도구 3-5개를 추천해주세요.
-
-            수업 정보:
-            - 주제: {plan['topic']}
-            - 학생: {student['name']} ({student['type']})
-            - 수업 모델: {plan['model']}
-            - 선택된 AIDT 기능: {plan['design']}
-
-            에듀테크 120선 도구들:
-            {edutech_tools_info}
-
-            위 도구들 중에서 이 수업에 가장 적합한 도구들을 추천하고, 
-            각각 어떻게 활용할 수 있는지 구체적으로 설명해주세요.
-            """
-            
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(prompt)
-            return response.text
-            
-        except Exception as e:
-            return f"에듀테크 도구 추천 생성 중 오류가 발생했습니다: {e}"
+    # Gemini에게 전달할 프롬프트 생성
+    selected_features_info = ""
+    for stage, features in plan['design'].items():
+        if features:
+            feature_names = [AIDT_FEATURES.get(f, {}).get('name', f) for f in features]
+            selected_features_info += f"\n{stage}: {', '.join(feature_names)}"
     
     prompt = f"""
     당신은 초등 교육 전문가이자 수업 설계 컨설턴트입니다.
-    아래의 수업 설계안에 대해 '수업의 강점', '발전 제안', '추가 디지털 도구 추천' 세 가지 항목으로 나누어 구체적이고 전문적인 피드백을 제공해주세요.
+    아래의 수업 설계안에 대해 '수업의 강점', '발전 제안', '추가 에듀테크 도구 추천' 세 가지 항목으로 나누어 구체적이고 전문적인 피드백을 제공해주세요.
     
-    - 수업 주제: {plan['subject']} {plan['grade']}학년 {plan['semester']}학기 {plan['unit']}
+    - 수업 주제: {plan['topic']}
     - 대상 학생: {STUDENT_DATA[plan['student_name']]['name']} ({STUDENT_DATA[plan['student_name']]['type']})
     - 학생 특성: {STUDENT_DATA[plan['student_name']]['description']}
     - 맞춤 지도 계획: {plan['guidance']}
     - 적용 수업 모델: {plan['model']}
-    - 선택된 에듀테크 도구: {selected_tools_info}
+    - 선택된 AIDT 기능: {selected_features_info}
     
     피드백은 반드시 아래 형식에 맞춰 한글로 작성해주세요.
 
@@ -1159,7 +1051,7 @@ def step4_feedback():
     - [제안 1]
     - [제안 2]
 
-    ### 🛠️ 추가 디지털 도구 추천
+    ### 🛠️ 추가 에듀테크 도구 추천
     - [도구 이름]: [도구 설명]
     - [도구 이름]: [도구 설명]
     """
@@ -1195,6 +1087,27 @@ def step4_feedback():
 
         except Exception as e:
             st.error(f"❌ AI 컨설팅 보고서 생성 중 오류가 발생했습니다: {e}")
+            
+            # 오류가 발생해도 기본 피드백과 다운로드는 제공
+            basic_feedback = {
+                'strengths': [f"'{STUDENT_DATA[plan['student_name']]['name']}' 학생을 위한 체계적인 수업 설계를 완료했습니다."],
+                'suggestions': ["AI 컨설팅 기능에 일시적 오류가 발생했지만, 수업 설계안은 정상적으로 완성되었습니다."],
+                'tools': []
+            }
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                st.download_button(
+                    label="📥 결과물 JPG 다운로드",
+                    data=generate_lesson_plan_image(plan, basic_feedback),
+                    file_name=f"lesson_plan_{plan['student_name']}_{plan['unit']}.jpg",
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
+            with col3:
+                if st.button("🆕 새로운 수업 설계하기", type="primary", use_container_width=True):
+                    reset_app()
+                    st.rerun()
 
 # --- 메인 앱 로직 ---
 st.markdown("""
