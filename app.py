@@ -1,6 +1,6 @@
     
     # Gemini에게 전달할 프롬프트 생성
-    selected_features_info = ""
+selected_features_info = ""
     for stage, features in plan['design'].items():
         if features:
             feature_names = [AIDT_FEATURES.get(f, {}).get('name', f) for f in features]
