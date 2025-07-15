@@ -1,4 +1,89 @@
-import streamlit as st
+    
+    # Gemini에게 전달할 프롬프트 생성
+    selected_features_info = ""
+    for stage, features in plan['design'].items():
+        if features:
+            feature_names = [AIDT_FEATURES.get(f, {}).get('name', f) for f in features]
+            selected_features_info += f"\n{stage}: {', '.join(feature_names)}"
+    
+    prompt = f"""
+    당신은 초등 교육 전문가이자 수업 설계 컨설턴트입니다.
+    아래의 수업 설계안에 대해 '수업의 강점', '발전 제안', '추가 에듀테크 도구 추천' 세 가지 항목으로 나누어 구체적이고 전문적인 피드백을 제공해주세요.
+    
+    - 수업 주제: {plan['topic']}
+    - 대상 학생: {STUDENT_DATA[plan['student_name']]['name']} ({STUDENT_DATA[plan['student_name']]['type']})
+    - 학생 특성: {STUDENT_DATA[plan['student_name']]['description']}
+    - 맞춤 지도 계획: {plan['guidance']}
+    - 적용 수업 모델: {plan['model']}
+    - 선택된 AIDT 기능: {selected_features_info}
+    
+    피드백은 반드시 아래 형식에 맞춰 한글로 작성해주세요.
+
+    ### 👍 수업의 강점
+    - [강점 1]
+    - [강점 2]
+
+    ### 💡 발전 제안
+    - [제안 1]
+    - [제안 2]
+
+    ### 🛠️ 추가 에듀테크 도구 추천
+    - [도구 이름]: [도구 설명]
+    - [도구 이름]: [도구 설명]
+    """
+
+    # AI 모델 호출 및 피드백 생성
+    with st.spinner('🤖 AI가 수업 설계안을 분석하고 컨설팅 보고서를 작성하는 중입니다...'):
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            feedback_text = response.text
+            
+            feedback_dict = parse_feedback_from_gemini(feedback_text)
+            
+            st.markdown("""
+            <div class="feedback-section">
+            """, unsafe_allow_html=True)
+            st.markdown(feedback_text)
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                st.download_button(
+                    label="📥 결과물 JPG 다운로드",
+                    data=generate_lesson_plan_image(plan, feedback_dict),
+                    file_name=f"lesson_plan_{plan['student_name']}_{plan['unit']}.jpg",
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
+            with col3:
+                if st.button("🆕 새로운 수업 설계하기", type="primary", use_container_width=True):
+                    reset_app()
+                    st.rerun()
+
+        except Exception as e:
+            st.error(f"❌ AI 컨설팅 보고서 생성 중 오류가 발생했습니다: {e}")
+            
+            # 오류가 발생해도 기본 피드백과 다운로드는 제공
+            basic_feedback = {
+                'strengths': [f"'{STUDENT_DATA[plan['student_name']]['name']}' 학생을 위한 체계적인 수업 설계를 완료했습니다."],
+                'suggestions': ["AI 컨설팅 기능에 일시적 오류가 발생했지만, 수업 설계안은 정상적으로 완성되었습니다."],
+                'tools': []
+            }
+            
+            col1, col2, col3 = st.columns([1, 1, 1])
+            with col1:
+                st.download_button(
+                    label="📥 결과물 JPG 다운로드",
+                    data=generate_lesson_plan_image(plan, basic_feedback),
+                    file_name=f"lesson_plan_{plan['student_name']}_{plan['unit']}.jpg",
+                    mime="image/jpeg",
+                    use_container_width=True
+                )
+            with col3:
+                if st.button("🆕 새로운 수업 설계하기", type="primary", use_container_width=True):
+                    reset_app()
+                    st.rerun()import streamlit as st
 from PIL import Image, ImageDraw, ImageFont
 import io
 import textwrap
@@ -34,11 +119,13 @@ st.markdown("""
         margin: 0;
         font-size: 1.8rem;
         font-weight: 600;
+        color: white;
     }
     
     .step-header p {
         margin: 0.5rem 0 0 0;
         opacity: 0.9;
+        color: white;
     }
     
     .curriculum-card {
@@ -227,43 +314,39 @@ def load_json_data():
 # --- 데이터 로드 ---
 json_data = load_json_data()
 
-# --- 에듀테크 도구 추출 및 분류 ---
-def categorize_edutech_tools(edutech_data):
-    """에듀테크 도구를 수업 단계별로 분류"""
-    
-    if not edutech_data or 'summary_table' not in edutech_data:
-        return {}
-    
-    # 카테고리별 매핑
-    category_mapping = {
-        '수업 도입 및 동기 유발': ['실시간 퀴즈', '게임 기반', '동기 유발'],
-        '개별 학습': ['학습 플랫폼', '개념 학습', 'AI 튜터', '진단'],
-        '협력 학습': ['협업', '소통', '상호작용', '토론'],
-        '정리': ['평가', '포트폴리오', '피드백', '관리']
-    }
-    
-    categorized = {stage: [] for stage in category_mapping.keys()}
-    
-    # summary_table의 도구들을 분류
-    for tool in edutech_data.get('summary_table', []):
-        tool_name = tool.get('tool_name', '')
-        core_feature = tool.get('core_feature', '')
-        sub_category = tool.get('sub_category', '')
-        
-        # 특성에 따라 분류
-        if any(keyword in core_feature.lower() or keyword in sub_category.lower() 
-               for keyword in ['퀴즈', '게임', '실시간', '경쟁']):
-            categorized['수업 도입 및 동기 유발'].append(tool)
-        elif any(keyword in core_feature.lower() or keyword in sub_category.lower() 
-                 for keyword in ['협업', '소통', '상호작용', '토론', '공유']):
-            categorized['협력 학습'].append(tool)
-        elif any(keyword in core_feature.lower() or keyword in sub_category.lower() 
-                 for keyword in ['평가', '포트폴리오', '피드백', '관리', '경영']):
-            categorized['정리'].append(tool)
-        else:
-            categorized['개별 학습'].append(tool)
-    
-    return categorized
+# --- 기본 AIDT 기능 정의 ---
+AIDT_FEATURES = {
+  'diagnosis': {
+    'name': '🔍 학습진단 및 분석', 
+    'description': '학생의 현재 수준과 취약점을 데이터로 확인합니다.',
+    'icon': '🔍'
+  },
+  'dashboard': {
+    'name': '📊 교사 대시보드', 
+    'description': '학생별 학습 현황과 이력을 실시간으로 관리합니다.',
+    'icon': '📊'
+  },
+  'path': {
+    'name': '🛤️ 학습 경로 추천', 
+    'description': '학생 수준에 맞는 학습 순서와 콘텐츠를 제안합니다.',
+    'icon': '🛤️'
+  },
+  'tutor': {
+    'name': '🤖 지능형 AI 튜터', 
+    'description': '1:1 맞춤형 힌트와 피드백을 제공하여 문제 해결을 돕습니다.',
+    'icon': '🤖'
+  },
+  'collaboration': {
+    'name': '👥 소통 및 협업 도구', 
+    'description': '모둠 구성, 과제 공동수행, 실시간 토론을 지원합니다.',
+    'icon': '👥'
+  },
+  'portfolio': {
+    'name': '📁 디지털 포트폴리오', 
+    'description': '학생의 학습 과정과 결과물을 자동으로 기록하고 관리합니다.',
+    'icon': '📁'
+  },
+}
 
 STUDENT_DATA = {
   '이OO': {
@@ -311,7 +394,7 @@ if 'step' not in st.session_state:
         "student_name": None,
         "guidance": "",
         "model": None,
-        "design": {'수업 도입 및 동기 유발': [], '개별 학습': [], '협력 학습': [], '정리': []},
+        "design": {'도입': [], '개별 학습': [], '협력 학습': [], '정리': []},
         "ai_recommendations": {}
     }
 
@@ -322,7 +405,7 @@ def reset_app():
     st.session_state.lesson_plan = {
         "subject": "", "grade": 0, "semester": 0, "unit": "", "topic": "",
         "student_name": None, "guidance": "", "model": None,
-        "design": {'수업 도입 및 동기 유발': [], '개별 학습': [], '협력 학습': [], '정리': []},
+        "design": {'도입': [], '개별 학습': [], '협력 학습': [], '정리': []},
         "ai_recommendations": {}
     }
 
@@ -355,7 +438,7 @@ def get_curriculum_options():
     return subjects, json_data['curriculum']
 
 def get_ai_recommendations():
-    """Gemini를 통해 에듀테크 도구 추천을 받는 함수"""
+    """Gemini를 통해 AIDT 기능 추천을 받는 함수"""
     try:
         gemini_api_key = st.secrets["GEMINI_API_KEY"]
         genai.configure(api_key=gemini_api_key)
@@ -363,45 +446,43 @@ def get_ai_recommendations():
         plan = st.session_state.lesson_plan
         student = STUDENT_DATA[plan['student_name']]
         
-        # 에듀테크 도구 정보 준비
-        edutech_tools = categorize_edutech_tools(json_data['edutech'])
-        tools_info = ""
-        for stage, tools in edutech_tools.items():
-            tools_info += f"\n{stage}:\n"
-            for tool in tools[:5]:  # 각 단계별 상위 5개만
-                tools_info += f"- {tool.get('tool_name', '')}: {tool.get('core_feature', '')}\n"
-        
         prompt = f"""
-        당신은 초등교육 전문가입니다. 다음 정보를 바탕으로 수업 단계별로 가장 적합한 에듀테크 도구를 추천해주세요.
+        당신은 초등교육 전문가입니다. 다음 정보를 바탕으로 수업 단계별로 가장 적합한 AIDT 기능을 추천해주세요.
 
-        - 수업 주제: {plan['subject']} {plan['grade']}학년 {plan['semester']}학기 {plan['unit']}
+        - 수업 주제: {plan['topic']}
         - 학생 유형: {student['type']}
         - 학생 특성: {student['description']}
         - 수업 모델: {plan['model']}
         - 맞춤 지도 계획: {plan['guidance']}
 
-        사용 가능한 에듀테크 도구:{tools_info}
+        사용 가능한 AIDT 기능:
+        1. diagnosis: 학습진단 및 분석
+        2. dashboard: 교사 대시보드  
+        3. path: 학습 경로 추천
+        4. tutor: 지능형 AI 튜터
+        5. collaboration: 소통 및 협업 도구
+        6. portfolio: 디지털 포트폴리오
 
-        각 수업 단계별로 추천하는 도구를 JSON 형식으로 답변해주세요.
-        추천 이유도 간단히 포함해주세요.
+        각 수업 단계(도입, 개별 학습, 협력 학습, 정리)별로 추천하는 기능을 JSON 형식으로 답변해주세요.
+        각 단계마다 1-3개의 기능을 추천하고, 추천 이유도 간단히 포함해주세요.
 
         응답 형식:
         {{
-            "수업 도입 및 동기 유발": {{
-                "recommended": ["도구명1", "도구명2"],
-                "reason": "추천 이유"
+            "도입": {{
+                "recommended": ["diagnosis"],
+                "reason": "수업 시작 전 학생의 현재 수준을 파악하기 위해"
             }},
             "개별 학습": {{
-                "recommended": ["도구명1"],
-                "reason": "추천 이유"
+                "recommended": ["path", "tutor"],
+                "reason": "개별 맞춤 학습을 위해"
             }},
             "협력 학습": {{
-                "recommended": ["도구명1"],
-                "reason": "추천 이유"
+                "recommended": ["collaboration"],
+                "reason": "모둠 활동 지원을 위해"
             }},
             "정리": {{
-                "recommended": ["도구명1", "도구명2"],
-                "reason": "추천 이유"
+                "recommended": ["portfolio", "dashboard"],
+                "reason": "학습 결과 정리 및 기록을 위해"
             }}
         }}
         """
@@ -575,48 +656,62 @@ def step1_analysis():
         st.markdown("### 📖 단원 선택")
         units = subjects_data[subject][grade][semester]
         
-        for i, unit_data in enumerate(units):
-            unit_name = unit_data['unit']
-            is_selected = st.session_state.lesson_plan['unit'] == unit_name
+        # 라디오 버튼으로 단원 선택
+        unit_options = [unit_data['unit'] for unit_data in units]
+        if unit_options:
+            selected_unit_name = st.radio(
+                "단원을 선택하세요:",
+                options=unit_options,
+                index=unit_options.index(st.session_state.lesson_plan['unit']) if st.session_state.lesson_plan['unit'] in unit_options else 0,
+                key="unit_selection"
+            )
             
-            card_class = "curriculum-card selected" if is_selected else "curriculum-card"
-            
-            if st.button(f"선택", key=f"unit_{i}", use_container_width=True):
+            # 선택된 단원 정보 업데이트
+            if selected_unit_name != st.session_state.lesson_plan['unit']:
                 st.session_state.lesson_plan.update({
                     'subject': subject,
                     'grade': grade,
                     'semester': semester,
-                    'unit': unit_name,
-                    'topic': f"{subject} {grade}학년 {semester}학기 {unit_name}"
+                    'unit': selected_unit_name,
+                    'topic': f"{subject} {grade}학년 {semester}학기 {selected_unit_name}"
                 })
-                st.rerun()
             
-            st.markdown(f"""
-            <div class="{card_class}">
-                <div style="display: flex; align-items: center; margin-bottom: 0.5rem;">
-                    <span class="subject-badge">{subject}</span>
-                    <h4 style="margin: 0; color: #1f2937;">{unit_name}</h4>
+            # 선택된 단원의 상세 정보 표시
+            selected_unit = next((unit for unit in units if unit['unit'] == selected_unit_name), None)
+            if selected_unit:
+                st.markdown(f"""
+                <div class="unit-info">
+                    <h4>📋 선택된 단원 정보</h4>
+                    <p><strong>단원:</strong> {selected_unit['unit']}</p>
+                    <p><strong>영역:</strong> {selected_unit['area']}</p>
+                    <p><strong>성취기준:</strong> {selected_unit['achievement']}</p>
+                    <p><strong>학습내용:</strong> {selected_unit['content']}</p>
                 </div>
-                <p style="margin: 0; color: #6b7280; font-size: 0.9rem;"><strong>영역:</strong> {unit_data['area']}</p>
-                <p style="margin: 0.5rem 0 0 0; color: #374151; font-size: 0.85rem; line-height: 1.4;">
-                    {unit_data['content'][:100]}{'...' if len(unit_data['content']) > 100 else ''}
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+        else:
+            st.info("해당 학년/학기에 등록된 단원이 없습니다.")
     
-    # 선택된 단원 정보 표시
-    if st.session_state.lesson_plan['unit']:
-        selected_unit = next((unit for unit in units if unit['unit'] == st.session_state.lesson_plan['unit']), None)
-        if selected_unit:
-            st.markdown(f"""
-            <div class="unit-info">
-                <h4>📋 선택된 단원 정보</h4>
-                <p><strong>단원:</strong> {selected_unit['unit']}</p>
-                <p><strong>영역:</strong> {selected_unit['area']}</p>
-                <p><strong>성취기준:</strong> {selected_unit['achievement']}</p>
-                <p><strong>학습내용:</strong> {selected_unit['content']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    # 데이터에 없는 교과목도 추가할 수 있도록 직접 입력 옵션 제공
+    st.markdown("---")
+    st.markdown("### ✏️ 또는 직접 입력")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        custom_subject = st.text_input("교과목 직접 입력", placeholder="예: 과학, 사회, 영어 등")
+    with col2:
+        custom_topic = st.text_input("수업 주제 직접 입력", placeholder="예: 5학년 과학 - 태양계와 별")
+    
+    if custom_subject and custom_topic:
+        if st.button("직접 입력한 내용으로 설정", use_container_width=True):
+            st.session_state.lesson_plan.update({
+                'subject': custom_subject,
+                'grade': 0,  # 직접 입력 시에는 0으로 설정
+                'semester': 0,
+                'unit': custom_topic,
+                'topic': custom_topic
+            })
+            st.success(f"✅ '{custom_topic}' 주제로 설정되었습니다!")
+            st.rerun()
     
     # 학생 선택
     st.markdown("### 👨‍🎓 지도할 학생 선택")
@@ -680,6 +775,7 @@ def step2_method():
     </div>
     """, unsafe_allow_html=True)
 
+    # AI 추천을 위한 질문
     col1, col2 = st.columns(2)
     
     with col1:
@@ -700,6 +796,7 @@ def step2_method():
             key="q2"
         )
 
+    # AI 추천 모델 표시
     recommended_model = None
     if q1 == "Yes" or q2 == "Yes":
         recommended_model = "개별 학습 우선 모델"
@@ -725,7 +822,92 @@ def step2_method():
             <p style="margin: 0; color: #6b7280;">{model_description}</p>
         </div>
         """, unsafe_allow_html=True)
-        st.session_state.lesson_plan['model'] = recommended_model
+
+    # 교사가 직접 선택할 수 있는 학습 모형 옵션들
+    st.markdown("---")
+    st.markdown("### 🎯 학습 모형 선택 (교사 선택)")
+    st.markdown("AI 추천을 참고하되, 최종 결정은 교사가 직접 선택해주세요.")
+    
+    learning_models = {
+        "개별 학습 우선 모델": {
+            "description": "학생 개별 맞춤형 학습을 우선으로 하는 수업 모델",
+            "characteristics": "• 개별 진단 및 맞춤 학습\n• 학습자 중심 자기주도학습\n• 개별 피드백 중심",
+            "suitable": "학습 격차가 큰 경우, 기초학력 보충이 필요한 경우"
+        },
+        "협력 학습 중심 모델": {
+            "description": "학생들 간의 협력과 상호작용을 중심으로 하는 수업 모델",
+            "characteristics": "• 모둠별 협력 활동\n• 토론 및 발표 중심\n• 상호 피드백",
+            "suitable": "의사소통 능력 향상, 사회성 발달이 필요한 경우"
+        },
+        "탐구 중심 모델": {
+            "description": "학생들이 스스로 문제를 발견하고 해결하는 탐구 활동 중심 모델",
+            "characteristics": "• 문제 발견 및 가설 설정\n• 실험 및 관찰 활동\n• 결론 도출 및 발표",
+            "suitable": "과학적 사고력, 창의적 문제해결력 신장이 목표인 경우"
+        },
+        "프로젝트 기반 모델": {
+            "description": "실제적인 프로젝트를 통해 학습하는 모델",
+            "characteristics": "• 실생활 연계 주제\n• 장기간 프로젝트 수행\n• 창작물 제작 및 발표",
+            "suitable": "융합적 사고, 실무 능력 개발이 필요한 경우"
+        },
+        "토의토론 중심 모델": {
+            "description": "다양한 관점을 나누고 토론하는 활동 중심 모델",
+            "characteristics": "• 찬반 토론 및 합의\n• 비판적 사고력 개발\n• 논리적 표현력 향상",
+            "suitable": "의사소통능력, 논리적 사고력 향상이 목표인 경우"
+        },
+        "게임 기반 모델": {
+            "description": "게임적 요소를 활용한 재미있는 학습 모델",
+            "characteristics": "• 게임화 요소 적용\n• 경쟁과 협력의 균형\n• 즉시 피드백",
+            "suitable": "학습 동기 유발, 참여도 향상이 필요한 경우"
+        }
+    }
+    
+    # 모델 선택을 위한 라디오 버튼
+    model_options = list(learning_models.keys())
+    
+    # AI 추천 모델을 기본값으로 설정
+    default_index = 0
+    if recommended_model and recommended_model in model_options:
+        default_index = model_options.index(recommended_model)
+    elif st.session_state.lesson_plan['model'] in model_options:
+        default_index = model_options.index(st.session_state.lesson_plan['model'])
+    
+    selected_model = st.radio(
+        "학습 모형을 선택해주세요:",
+        options=model_options,
+        index=default_index,
+        key="learning_model_selection"
+    )
+    
+    # 선택된 모델 정보 표시
+    if selected_model:
+        model_info = learning_models[selected_model]
+        
+        # AI 추천 여부 표시
+        is_ai_recommended = selected_model == recommended_model
+        badge = " 🤖 AI 추천" if is_ai_recommended else ""
+        
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border: 2px solid {'#10b981' if is_ai_recommended else '#e2e8f0'};
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin: 1rem 0;
+        ">
+            <h3 style="color: #1f2937; margin: 0 0 0.5rem 0;">{selected_model}{badge}</h3>
+            <p style="color: #6b7280; margin: 0 0 1rem 0; font-size: 1rem;"><strong>{model_info['description']}</strong></p>
+            <div style="margin-bottom: 1rem;">
+                <strong style="color: #374151;">🔸 특징:</strong>
+                <pre style="color: #6b7280; margin: 0.5rem 0; font-family: inherit; white-space: pre-wrap;">{model_info['characteristics']}</pre>
+            </div>
+            <div>
+                <strong style="color: #374151;">🎯 적합한 상황:</strong>
+                <p style="color: #6b7280; margin: 0.5rem 0;">{model_info['suitable']}</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.session_state.lesson_plan['model'] = selected_model
 
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -734,30 +916,42 @@ def step2_method():
             st.session_state.step = 1
             st.rerun()
     with col3:
-        if st.button("🚀 다음 단계로", type="primary", disabled=not recommended_model, use_container_width=True):
+        if st.button("🚀 다음 단계로", type="primary", disabled=not selected_model, use_container_width=True):
             st.session_state.step = 3
             st.rerun()
 
 def step3_structure():
     st.markdown("""
     <div class="step-header">
-        <h1>🏗️ 3단계: 수업 구조화 및 에듀테크 도구 선택</h1>
-        <p>실제 에듀테크 120선 데이터를 활용하여 AI가 추천하는 최적의 디지털 도구를 선택합니다.</p>
+        <h1>🏗️ 3단계: 수업 구조화 및 AIDT 기능 선택</h1>
+        <p>수업 단계별로 활동을 구성하고, AI 추천을 참고하여 활용할 AIDT 기능을 최종 선택합니다.</p>
     </div>
     """, unsafe_allow_html=True)
     
     # AI 추천 받기
     if 'ai_recommendations' not in st.session_state.lesson_plan or not st.session_state.lesson_plan['ai_recommendations']:
-        with st.spinner('🤖 AI가 에듀테크 120선 데이터를 분석하여 최적의 도구를 추천하는 중입니다...'):
+        with st.spinner('🤖 AI가 최적의 AIDT 기능을 분석하고 추천하는 중입니다...'):
             st.session_state.lesson_plan['ai_recommendations'] = get_ai_recommendations()
     
     ai_recs = st.session_state.lesson_plan['ai_recommendations']
     
-    # 에듀테크 도구 분류
-    edutech_tools = categorize_edutech_tools(json_data['edutech'])
+    # 기본 추천 로직 (AI 추천이 없을 경우)
+    student_type = STUDENT_DATA[st.session_state.lesson_plan['student_name']]['type']
+    model = st.session_state.lesson_plan['model']
     
-    stage_icons = {'수업 도입 및 동기 유발': '🚀', '개별 학습': '📚', '협력 학습': '👥', '정리': '🎯'}
-    stages = ['수업 도입 및 동기 유발', '개별 학습', '협력 학습', '정리']
+    default_recs = {'도입': ['diagnosis'], '개별 학습': [], '협력 학습': [], '정리': ['portfolio', 'dashboard']}
+    if model == '개별 학습 우선 모델':
+        default_recs['개별 학습'].append('path')
+        if student_type == '느린 학습자':
+            default_recs['개별 학습'].append('tutor')
+        default_recs['협력 학습'].append('collaboration')
+    else:
+        default_recs['협력 학습'].append('collaboration')
+        if student_type == '빠른 학습자':
+            default_recs['개별 학습'].append('path')
+
+    stage_icons = {'도입': '🚀', '개별 학습': '📚', '협력 학습': '👥', '정리': '🎯'}
+    stages = ['도입', '개별 학습', '협력 학습', '정리']
     
     for stage in stages:
         st.markdown(f"""
@@ -770,79 +964,70 @@ def step3_structure():
         
         # AI 추천 표시
         if ai_recs and stage in ai_recs:
-            ai_recommended_tools = ai_recs[stage].get('recommended', [])
+            ai_recommended_features = ai_recs[stage].get('recommended', [])
             reason = ai_recs[stage].get('reason', '')
-            if ai_recommended_tools:
+            if ai_recommended_features:
                 st.info(f"🤖 **AI 추천**: {reason}")
         
-        # 해당 단계의 도구들 표시
-        stage_tools = edutech_tools.get(stage, [])
-        selected_tools = []
+        # AIDT 기능 선택
+        options = list(AIDT_FEATURES.keys())
+        selected_features = []
         
-        if stage_tools:
-            cols = st.columns(2)
-            
-            for i, tool in enumerate(stage_tools):
-                col_idx = i % 2
-                tool_name = tool.get('tool_name', '')
-                core_feature = tool.get('core_feature', '')
-                website = tool.get('website', '')
-                pricing = tool.get('pricing_model', '')
-                korean_support = tool.get('korean_support', '')
-                
-                with cols[col_idx]:
-                    # AI 추천 여부 확인
-                    is_ai_recommended = (ai_recs and stage in ai_recs and 
-                                       tool_name in ai_recs[stage].get('recommended', []))
-                    
-                    # 기본 선택값 설정
-                    current_selections = st.session_state.lesson_plan['design'].get(stage, [])
-                    is_selected = tool_name in current_selections or is_ai_recommended
-                    
-                    # 체크박스
-                    is_checked = st.checkbox(
-                        "",
-                        value=is_selected,
-                        key=f"{stage}_{tool_name}_{i}",
-                        label_visibility="collapsed"
-                    )
-                    
-                    if is_checked:
-                        selected_tools.append(tool_name)
-                    
-                    # 도구 카드
-                    card_class = "edutech-card"
-                    badge_html = ""
-                    
-                    if is_ai_recommended:
-                        card_class += " ai-recommended"
-                        badge_html = '<span class="ai-recommended-badge">AI 추천</span>'
-                    
-                    korean_badge = "🇰🇷" if korean_support == "O" else ""
-                    pricing_color = "#10b981" if pricing == "Free" else "#f59e0b" if pricing == "Freemium" else "#ef4444"
-                    
-                    st.markdown(f"""
-                    <div class="{card_class}">
-                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.5rem;">
-                            <h4 style="margin: 0; color: #1f2937; flex: 1;">
-                                {korean_badge} {tool_name} {badge_html}
-                            </h4>
-                            <span style="background: {pricing_color}; color: white; padding: 0.2rem 0.5rem; border-radius: 8px; font-size: 0.7rem; white-space: nowrap; margin-left: 0.5rem;">
-                                {pricing}
-                            </span>
-                        </div>
-                        <p style="margin: 0 0 0.5rem 0; color: #6b7280; font-size: 0.85rem; line-height: 1.4;">
-                            {core_feature}
-                        </p>
-                        <p style="margin: 0; color: #9ca3af; font-size: 0.75rem;">
-                            🌐 {website}
-                        </p>
-                    </div>
-                    """, unsafe_allow_html=True)
+        # 기본 선택값 설정
+        current_selections = st.session_state.lesson_plan['design'].get(stage, [])
+        if not current_selections:
+            ai_recommended = ai_recs.get(stage, {}).get('recommended', []) if ai_recs else []
+            default_selection = ai_recommended if ai_recommended else default_recs.get(stage, [])
         else:
-            st.info(f"이 단계에 사용할 수 있는 도구가 없습니다.")
+            default_selection = current_selections
         
-        st.session_state.lesson_plan['design'][stage] = selected_tools
+        # 체크박스 형태로 기능 선택
+        cols = st.columns(2)
+        
+        for i, feature_key in enumerate(options):
+            feature = AIDT_FEATURES[feature_key]
+            col_idx = i % 2
+            
+            with cols[col_idx]:
+                # 추천 상태 확인
+                is_ai_recommended = ai_recs and stage in ai_recs and feature_key in ai_recs[stage].get('recommended', [])
+                is_default_recommended = feature_key in default_recs.get(stage, [])
+                is_selected = feature_key in default_selection
+                
+                # 체크박스
+                is_checked = st.checkbox(
+                    "",
+                    value=is_selected,
+                    key=f"{stage}_{feature_key}",
+                    label_visibility="collapsed"
+                )
+                
+                if is_checked:
+                    selected_features.append(feature_key)
+                
+                # 기능 카드
+                card_class = "edutech-card"
+                badge_html = ""
+                
+                if is_ai_recommended:
+                    card_class += " ai-recommended"
+                    badge_html = '<span class="ai-recommended-badge">AI 추천</span>'
+                elif is_default_recommended:
+                    card_class += " recommended"
+                    badge_html = '<span class="recommended-badge">기본 추천</span>'
+                
+                st.markdown(f"""
+                <div class="{card_class}">
+                    <h4 style="margin: 0 0 0.5rem 0; color: #1f2937;">
+                        {feature['name']} {badge_html}
+                    </h4>
+                    <p style="margin: 0; color: #6b7280; font-size: 0.9rem;">
+                        {feature['description']}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        st.session_state.lesson_plan['design'][stage] = selected_features
     
     st.markdown("---")
     col1, col2, col3 = st.columns([1, 1, 1])
@@ -910,11 +1095,48 @@ def step4_feedback():
                 st.rerun()
         return
 
-    # Gemini에게 전달할 프롬프트 생성
-    selected_tools_info = ""
-    for stage, tools in plan['design'].items():
-        if tools:
-            selected_tools_info += f"\n{stage}: {', '.join(tools)}"
+    # 4단계에서 에듀테크 도구 추천을 위한 함수 추가
+    def get_edutech_recommendations():
+        """Gemini를 통해 에듀테크 도구 추천을 받는 함수"""
+        try:
+            gemini_api_key = st.secrets["GEMINI_API_KEY"]
+            genai.configure(api_key=gemini_api_key)
+            
+            plan = st.session_state.lesson_plan
+            student = STUDENT_DATA[plan['student_name']]
+            
+            # 에듀테크 120선 데이터에서 도구 정보 추출
+            edutech_tools_info = ""
+            if json_data['edutech'] and 'summary_table' in json_data['edutech']:
+                for tool in json_data['edutech']['summary_table'][:20]:  # 상위 20개만
+                    tool_name = tool.get('tool_name', '')
+                    core_feature = tool.get('core_feature', '')
+                    sub_category = tool.get('sub_category', '')
+                    edutech_tools_info += f"- {tool_name} ({sub_category}): {core_feature}\n"
+            
+            prompt = f"""
+            당신은 초등교육 전문가입니다. 다음 수업 설계안을 분석하고, 
+            제공된 에듀테크 120선 데이터에서 가장 적합한 도구 3-5개를 추천해주세요.
+
+            수업 정보:
+            - 주제: {plan['topic']}
+            - 학생: {student['name']} ({student['type']})
+            - 수업 모델: {plan['model']}
+            - 선택된 AIDT 기능: {plan['design']}
+
+            에듀테크 120선 도구들:
+            {edutech_tools_info}
+
+            위 도구들 중에서 이 수업에 가장 적합한 도구들을 추천하고, 
+            각각 어떻게 활용할 수 있는지 구체적으로 설명해주세요.
+            """
+            
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            return response.text
+            
+        except Exception as e:
+            return f"에듀테크 도구 추천 생성 중 오류가 발생했습니다: {e}"
     
     prompt = f"""
     당신은 초등 교육 전문가이자 수업 설계 컨설턴트입니다.
@@ -977,8 +1199,8 @@ def step4_feedback():
 # --- 메인 앱 로직 ---
 st.markdown("""
 <div style="text-align: center; padding: 2rem 0; background: linear-gradient(90deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 15px; margin-bottom: 2rem;">
-    <h1 style="margin: 0; font-size: 2.5rem;">🎯 AI 코칭 기반 맞춤수업 설계 시뮬레이터</h1>
-    <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 1.1rem;">실제 교육과정과 에듀테크 120선 데이터로 만드는 맞춤형 수업</p>
+    <h1 style="margin: 0; font-size: 2.5rem; color: white;">🎯 AI 코칭 기반 맞춤수업 설계 시뮬레이터</h1>
+    <p style="margin: 0.5rem 0 0 0; opacity: 0.9; font-size: 1.1rem; color: white;">실제 교육과정과 에듀테크 120선 데이터로 만드는 맞춤형 수업</p>
 </div>
 """, unsafe_allow_html=True)
 
