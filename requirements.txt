@@ -1,2 +1,7 @@
 streamlit
-Pillow
+google-generativeai
+pandas
+numpy
+matplotlib
+seaborn
+plotly
