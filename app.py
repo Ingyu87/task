@@ -5,6 +5,7 @@ import textwrap
 import json
 import google.generativeai as genai
 import os
+import re  # JSON 파싱을 위해 re 모듈 추가
 
 # --- 페이지 설정 ---
 st.set_page_config(
@@ -229,15 +230,25 @@ def generate_student_profiles_with_gemini(subject, grade, semester, unit):
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         
-        # 응답 텍스트에서 JSON 부분만 추출
-        clean_response = response.text.strip().replace("```json", "").replace("```", "")
-        return json.loads(clean_response)
+        # --- 수정된 부분: 안정적인 JSON 파싱 ---
+        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError as e:
+                st.error(f"❌ AI 학생 프로필 JSON 파싱 오류가 발생했습니다: {e}")
+                st.code(response.text, language="text")
+                return None
+        else:
+            st.error("❌ AI 학생 프로필 응답에서 유효한 JSON을 찾지 못했습니다.")
+            st.code(response.text, language="text")
+            return None
+        # --- 수정 종료 ---
 
     except Exception as e:
-        st.error(f"AI 학생 프로필 생성 중 오류 발생: {e}")
+        st.error(f"❌ AI 학생 프로필 생성 중 API 또는 기타 오류 발생: {e}")
         return None
         
-# --- 나머지 헬퍼 함수들은 원래 코드와 동일하게 유지됩니다 ---
 def get_ai_recommendations():
     """Gemini를 통해 AIDT 기능 추천을 받는 함수"""
     try:
@@ -274,12 +285,23 @@ def get_ai_recommendations():
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         
+        # --- 수정된 부분: 안정적인 JSON 파싱 ---
         json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
-        if json_match: return json.loads(json_match.group())
-        return {}
-        
+        if json_match:
+            try:
+                return json.loads(json_match.group())
+            except json.JSONDecodeError as e:
+                st.error(f"❌ AI 추천 기능 JSON 파싱 오류가 발생했습니다: {e}")
+                st.code(response.text, language="text")
+                return {}
+        else:
+            st.error("❌ AI 추천 기능 응답에서 유효한 JSON을 찾지 못했습니다.")
+            st.code(response.text, language="text")
+            return {}
+        # --- 수정 종료 ---
+            
     except Exception as e:
-        st.error(f"AI 추천 생성 중 오류: {e}")
+        st.error(f"❌ AI 추천 생성 중 API 또는 기타 오류: {e}")
         return {}
 
 def parse_feedback_from_gemini(text):
@@ -316,7 +338,10 @@ def generate_lesson_plan_image(plan, feedback):
         font_small = ImageFont.truetype(font_path, 12)
     except IOError:
         st.warning(f"'{font_path}' 폰트 파일을 찾을 수 없어 기본 폰트로 이미지를 생성합니다.")
-        font_title, font_header, font_body, font_small = [ImageFont.load_default() for _ in range(4)]
+        font_title = ImageFont.load_default(size=28)
+        font_header = ImageFont.load_default(size=20)
+        font_body = ImageFont.load_default(size=14)
+        font_small = ImageFont.load_default(size=12)
 
     y = 30
     draw.text((width/2, y), "AI 코칭 기반 맞춤수업 설계안", font=font_title, fill=(0,0,0), anchor="mt")
@@ -341,7 +366,7 @@ def generate_lesson_plan_image(plan, feedback):
             draw.text((50, y), f"■ {stage}:", font=font_body, fill=(0,0,0)); y += 25
             for feature in features:
                 feature_name = AIDT_FEATURES.get(feature, {}).get('name', feature)
-                draw.text((60, y), f"   - {feature_name}", font=font_small, fill=(50,50,50)); y += 18
+                draw.text((60, y), f"  - {feature_name}", font=font_small, fill=(50,50,50)); y += 18
             y += 10
     y += 15
     
@@ -349,19 +374,19 @@ def generate_lesson_plan_image(plan, feedback):
     draw.text((40, y), "4. AI 종합 컨설팅", font=font_header, fill=(29, 78, 216)); y += 35
     draw.text((50, y), "👍 수업의 강점", font=font_body, fill=(21, 128, 61)); y += 25
     for item in feedback['strengths']:
-        lines = textwrap.wrap(f"   - {item}", width=80)
+        lines = textwrap.wrap(f"  - {item}", width=80)
         for line in lines: draw.text((60, y), line, font=font_small, fill=(50,50,50)); y += 18
     y += 15
 
     draw.text((50, y), "💡 발전 제안", font=font_body, fill=(202, 138, 4)); y += 25
     for item in feedback['suggestions']:
-        lines = textwrap.wrap(f"   - {item}", width=80)
+        lines = textwrap.wrap(f"  - {item}", width=80)
         for line in lines: draw.text((60, y), line, font=font_small, fill=(50,50,50)); y += 18
     y += 15
 
     draw.text((50, y), "🛠️ 추가 에듀테크 도구 추천", font=font_body, fill=(37, 99, 235)); y += 25
     for tool in feedback['tools']:
-        lines = textwrap.wrap(f"   - {tool['name']}: {tool['description']}", width=80)
+        lines = textwrap.wrap(f"  - {tool['name']}: {tool['description']}", width=80)
         for line in lines: draw.text((60, y), line, font=font_small, fill=(50,50,50)); y += 18
     y += 15
     
@@ -435,7 +460,7 @@ def step1_analysis():
                             st.session_state.generated_students = profiles
                             st.rerun() # 프로필 생성 후 화면 새로고침
                         else:
-                            st.error("학생 프로필 생성에 실패했습니다. 다시 시도해주세요.")
+                            st.error("학생 프로필 생성에 실패했습니다. AI 응답을 확인하고 다시 시도해주세요.")
             else:
                 # --- 3. 지도할 학생 선택 ---
                 st.info("✅ AI 학생 프로필 생성이 완료되었습니다. 지도할 학생을 선택해주세요.")
@@ -482,8 +507,6 @@ def step1_analysis():
             else:
                 st.error("⚠️ 모든 항목(단원, 학생, 지도계획)을 입력해주세요.")
 
-# --- 나머지 step2, step3, step4, 메인 로직은 원래 코드와 거의 동일하게 유지됩니다 ---
-# (단, STUDENT_DATA를 st.session_state.generated_students로 참조하는 부분만 수정)
 def step2_method():
     st.markdown("""
     <div class="step-header">
@@ -561,7 +584,9 @@ def step3_structure():
     with col1:
         if st.button("⬅️ 이전 단계로", use_container_width=True): st.session_state.step = 2; st.rerun()
     with col2:
-        if st.button("🔄 AI 추천 새로고침", use_container_width=True): st.session_state.lesson_plan['ai_recommendations'] = {}; st.rerun()
+        if st.button("🔄 AI 추천 새로고침", use_container_width=True): 
+            st.session_state.lesson_plan['ai_recommendations'] = {}
+            st.rerun()
     with col3:
         if st.button("🎯 제출하고 컨설팅 받기", type="primary", use_container_width=True): st.session_state.step = 4; st.rerun()
 
